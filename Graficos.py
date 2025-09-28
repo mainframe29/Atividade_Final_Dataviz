@@ -183,7 +183,7 @@ class Graficos():
             xaxis_title='Setor',
             yaxis_title='Valor',
             barmode='group',
-            updatemenus=[dict(active=0, buttons=buttons, x=1.1, y=1.6)],
+            updatemenus=[dict(active=0, buttons=buttons, x=1.1, y=1.8)],
             template='plotly_white'
         )
 
