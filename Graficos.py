@@ -3,7 +3,7 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 from sklearn.linear_model import LinearRegression
-from dash import dcc
+from dash import dcc, html
 
 from GerenciarArquivos import GerenciarArquivos
 
@@ -104,7 +104,7 @@ class Graficos():
             buttons.append(dict(label=regiao,
                                 method='update',
                                 args=[{'visible': visibilidade},
-                                    {'title': f'Empoderamento Econômico - {regiao}'}]))
+                                    {'title': {'text': f'Empoderamento Econômico - {regiao}'}}]))
 
         fig.update_layout(
             title=f'Empoderamento Econômico - {regioes[0]}',
@@ -176,7 +176,7 @@ class Graficos():
             buttons.append(dict(label=str(ano),
                                 method='update',
                                 args=[{'visible': vis},
-                                    {'title': f'Empoderamento Econômico por Setor - {ano}'}]))
+                                    {'title': {'text': f'Empoderamento Econômico por Setor - {ano}'}}]))
 
         fig.update_layout(
             title=f'Empoderamento Econômico por Setor - {anos[0]}',
@@ -221,29 +221,51 @@ class Graficos():
                 rows.append({'UF': uf,
                             'Homens': row['Homens'],
                             'Mulheres': row['Mulheres'],
-                            'Dif_percent': row['Dif_percent']})
+                            'Dif_percent': row['Dif_percent'],
+                            'Ano': row['Ano']})
         df_map = pd.DataFrame(rows)
 
-        # Criando mapa do Brasil
-        fig = px.choropleth(
-            df_map,
-            geojson='https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/brazil-states.geojson',
-            locations='UF',
-            featureidkey='properties.sigla',  # propriedade do geojson
-            color='Dif_percent',
-            color_continuous_scale='RdBu_r',
-            range_color=[0, df_map['Dif_percent'].max()],
-            hover_data={
-                'Homens': True,
-                'Mulheres': True,
-                'Dif_percent': True,
-                'UF': False  # oculta a coluna UF do tooltip
-            },
-            labels={'Dif_percent': 'Diferença (%)'}
-        )
+        # Lista de anos disponíveis
+        anos = df_map['Ano'].unique()
+
+        # Cria a figura
+        fig = go.Figure()
+
+        # Adiciona barras para cada ano, mas apenas o primeiro ano visível inicialmente
+        for i, ano in enumerate(anos):
+            df_ano = df_map[df_map['Ano'] == ano]
+            visible = True if i == 0 else False
+            fig.add_trace(go.Choropleth(
+                geojson="https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/brazil-states.geojson",
+                locations=df_ano['UF'],
+                z=df_ano['Dif_percent'],
+                featureidkey="properties.sigla",
+                colorscale="RdBu_r",
+                zmin=0,
+                zmax=df_map['Dif_percent'].max(),
+                visible=visible,
+                hovertext=[
+                    f"Homens: {h:.2f}<br>Mulheres: {m:.2f}<br>Dif: {d:.2f}%"
+                    for h, m, d in zip(df_ano['Homens'], df_ano['Mulheres'], df_ano['Dif_percent'])
+                ],
+                hoverinfo="text"
+            ))
+
+        # Botões dropdown para escolher o ano
+        buttons = []
+        for i, ano in enumerate(anos):
+            vis = [False] * len(fig.data)
+            vis[i] = True  # Ativa só o ano selecionado
+            buttons.append(dict(label=str(ano),
+                                method='update',
+                                args=[{'visible': vis},
+                                    {'title': {'text': f'Diferença percentual entre Homens e Mulheres por Região - {ano}'}}]))
+
 
         fig.update_geos(fitbounds="locations", visible=False)
-        fig.update_layout(title='Diferença percentual entre Homens e Mulheres por Região', template='plotly_white')
+        fig.update_layout(title=f'Diferença percentual entre Homens e Mulheres por Região - {anos[0]}',
+                          updatemenus=[dict(active=0, buttons=buttons, x=1.1, y=1.6)],
+                          template='plotly_white')
 
         return dcc.Graph(figure=fig, style={
         'border': '2px solid #2980b9',
@@ -251,6 +273,43 @@ class Graficos():
         'padding': '10px',
         'height': '300px'
         })
+    
+
+    def mapaGeografico2(self):
+
+        df_media = self.df_regional.groupby(['Ano', 'Indicadores'], as_index=False).mean()
+        df = pd.DataFrame(df_media)
+
+        # Calcula diferença percentual
+        df['Dif_percent'] = ((df['Homens'] - df['Mulheres']) / df['Homens'] * 100).round(2)
+
+        # Dicionário para mapear regiões para códigos das UFs
+        regioes_uf = {
+            'Norte': ['AC','AP','AM','PA','RO','RR','TO'],
+            'Nordeste': ['AL','BA','CE','MA','PB','PE','PI','RN','SE'],
+            'Sudeste': ['ES','MG','RJ','SP'],
+            'Sul': ['PR','RS','SC'],
+            'Centro-Oeste': ['DF','GO','MT','MS'],
+            'Brasil': ['BR']
+        }
+
+        return html.Div([
+            dcc.Dropdown(
+                id='filtro-ano',
+                options=[{'label': str(ano), 'value': ano} for ano in df['Ano'].unique()],
+                value=df['Ano'].min(),
+                clearable=False,
+                style={'margin-bottom': '10px'}
+            ),
+            dcc.Graph(id='grafico-mapa',
+                    style={
+                        'border': '2px solid #2980b9',
+                        'borderRadius': '10px',
+                        'padding': '10px',
+                        'height': '300px'
+                    })
+        ])
+
     
     def distribuicaoEscolaridade(self):
         df = pd.DataFrame(self.df_cargo)
@@ -303,12 +362,14 @@ class Graficos():
         anos = df['Ano'].values.reshape(-1, 1)
         model_dif = LinearRegression().fit(anos, df['Dif'])
 
+        texto = ""
+
         if model_dif.coef_[0] >= 0:
-            print("Diferença não está diminuindo. Igualdade não ocorrerá.")
+            texto = "Diferença não está diminuindo. Igualdade não ocorrerá."
             Ano_eq = None
         else:
             Ano_eq = -model_dif.intercept_ / model_dif.coef_[0]
-            print(f"Projeção indica igualdade em {Ano_eq:.1f}")
+            texto = f"Projeção indica igualdade em {Ano_eq:.1f}"
 
         # Modelos lineares para salários
         model_h = LinearRegression().fit(anos, df['Homens'])
@@ -346,7 +407,7 @@ class Graficos():
                 x=[Ano_eq],
                 y=[model_h.predict([[Ano_eq]])[0]],
                 mode='markers+text',
-                name='Igualdade Salarial',
+                name=texto,
                 text=['Igualdade'],
                 textposition='top center',
                 marker=dict(color='green', size=12)
